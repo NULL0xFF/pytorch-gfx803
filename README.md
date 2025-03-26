@@ -93,6 +93,9 @@ exit
 #### rocBLAS 3.1.0
 
 ```shell
+# Re-enable conda environment
+conda activate rocm-build
+
 # Download rocBLAS
 sudo mkdir /opt/rocBLAS
 sudo chown $LOGNAME: /opt/rocBLAS
