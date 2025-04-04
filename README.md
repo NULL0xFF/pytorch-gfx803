@@ -1,4 +1,4 @@
-# ROCm 5.7.1 + PyTorch 2.3.1 on RX 580 4G
+# ROCm 6.1.5 + PyTorch 2.4.1 on RX 580 4G
 
 This walkthrough provides step-by-step instructions for setting up the environment to install ROCm, build custom rocBLAS, compile PyTorch with related libraries, and test using a UI tool.
 
@@ -27,8 +27,9 @@ This project is heavily inspired by the following links. For a different perspec
   |-|-|-|
   |CPU|64 Cores||
   |RAM|64 GiB||
-  |Disk|12 GiB|/|
-  |Disk|48 GiB|/opt|
+  |Disk|40 GiB|/|
+  |Disk|32 GiB|/opt|
+  |Disk|40 GiB|/opt/rocm-6.1.5|
   |Device|/dev/dri/card1|gid=44 (video)|
   |Device|/dev/dri/renderD128|gid=108 (render)|
   |Device|/dev/kfd|gid=108 (render)|
@@ -73,16 +74,17 @@ sudo apt install -y build-essential ccache git libjpeg-dev libjpeg-turbo8-dev li
 
 ### Install ROCm
 
-#### ROCm 5.7.1
+#### ROCm 6.1.5
 
 ```shell
-# AMDGPU Install Script
-wget https://repo.radeon.com/amdgpu-install/5.7.1/ubuntu/jammy/amdgpu-install_5.7.50701-1_all.deb -P /tmp/
-sudo apt install -y /tmp/amdgpu-install_5.7.50701-1_all.deb
+# Setup AMD repository
+wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.1.5 jammy main" | sudo tee --append /etc/apt/sources.list.d/rocm.list
+echo -e 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600' | sudo tee /etc/apt/preferences.d/rocm-pin-600
 sudo apt update
 
-# Install ROCm 5.7.1
-sudo amdgpu-install -y --usecase=rocm,rocmdev,hiplibsdk,mlsdk --no-dkms
+# Install ROCm 6.1.5
+sudo apt install rocm rocm-developer-tools rocm-ml-sdk rocm-ml-libraries rocm-hip-sdk rocm-hip-libraries
 sudo sed -i 's|^PATH="|PATH="/opt/rocm/bin:|' /etc/environment
 echo "ROCM_PATH=/opt/rocm" | sudo tee -a /etc/environment
 
@@ -90,7 +92,7 @@ echo "ROCM_PATH=/opt/rocm" | sudo tee -a /etc/environment
 exit
 ```
 
-#### rocBLAS 3.1.0
+#### rocBLAS 4.0.0
 
 ```shell
 # Re-enable conda environment
@@ -99,38 +101,47 @@ conda activate rocm-build
 # Download rocBLAS
 sudo mkdir /opt/rocBLAS
 sudo chown $LOGNAME: /opt/rocBLAS
-git clone --recursive https://github.com/ROCm/rocBLAS.git -b rocm-5.7.1 /opt/rocBLAS
+git clone --recursive https://github.com/ROCm/rocBLAS.git -b rocm-6.1.5 /opt/rocBLAS
 cd /opt/rocBLAS
 
 # Install required packages
-pip install "cmake>=3.18.0,<3.19" joblib pyyaml
+pip install "cmake<4.0" joblib pyyaml
 
 # Build rocBLAS
 time ./install.sh -a "gfx803"
 
 # Copy compiled library
 sudo rsync -vrh /opt/rocBLAS/build/release/rocblas-install/lib/rocblas/library/ /opt/rocm/lib/rocblas/library/
-sudo cp /opt/rocBLAS/build/release/rocblas-install/lib/librocblas.so.3.1.0 /opt/rocm/lib/librocblas.so.3.1.0.50701
+sudo cp /opt/rocBLAS/build/release/rocblas-install/lib/librocblas.so.4.1 /opt/rocm/lib/librocblas.so.4.1.60105
+```
+
+#### rocSOLVER 3.25.0
+
+```shell
+# Download rocBLAS
+sudo mkdir /opt/rocSOLVER
+sudo chown $LOGNAME: /opt/rocSOLVER
+git clone --recursive https://github.com/ROCm/rocSOLVER.git -b rocm-6.1.5 /opt/rocSOLVER
+cd /opt/rocSOLVER
+
+# Build rocBLAS
+time ./install.sh -a "gfx803"
+
+# Copy compiled library
+sudo cp /opt/rocSOLVER/build/release/rocsolver-install/lib/librocsolver.so.0.1 /opt/rocm/lib/librocsolver.so.0.1.60105
 
 # Reboot
 sudo systemctl reboot
 ```
 
-```shell-session
-real    7m21.633s
-user    68m6.908s
-sys     4m39.870s
-```
-
 ```shell
 # Verify if ROCm is installed correctly
 rocminfo
-clinfo
 ```
 
 ### Install PyTorch
 
-#### PyTorch 2.3.1
+#### PyTorch 2.4.1
 
 ```shell
 # Re-enable conda environment
@@ -139,72 +150,54 @@ conda activate rocm-build
 # Download PyTorch
 sudo mkdir /opt/pytorch
 sudo chown $LOGNAME: /opt/pytorch
-git clone --recursive https://github.com/pytorch/pytorch.git -b v2.3.1 /opt/pytorch
+git clone --recursive https://github.com/pytorch/pytorch.git -b v2.4.1 /opt/pytorch
 cd /opt/pytorch
 
 # Install required packages
-pip install mkl mkl-include "numpy<2.0" ninja -r requirements.txt
+pip install mkl-static mkl-include ninja -r requirements.txt
 
 # Build PyTorch
 export PYTORCH_ROCM_ARCH=gfx803
-export PYTORCH_BUILD_VERSION=2.3.1 PYTORCH_BUILD_NUMBER=1
+export PYTORCH_BUILD_VERSION=2.4.1 PYTORCH_BUILD_NUMBER=1
 python tools/amd_build/build_amd.py
 time python setup.py bdist_wheel
 
 # Install PyTorch
-pip install /opt/pytorch/dist/torch-2.3.1-cp312-cp312-linux_x86_64.whl
+pip install /opt/pytorch/dist/torch-2.4.1-cp312-cp312-linux_x86_64.whl
 ```
 
-```shell-session
-real    57m20.601s
-user    1255m48.793s
-sys     73m34.033s
-```
-
-#### TorchVision 0.18.1
+#### TorchVision 0.19.1
 
 ```shell
 # Download TorchVision
 sudo mkdir /opt/pytorch_vision
 sudo chown $LOGNAME: /opt/pytorch_vision
-git clone --recursive https://github.com/pytorch/vision.git -b v0.18.1 /opt/pytorch_vision
+git clone --recursive https://github.com/pytorch/vision.git -b v0.19.1 /opt/pytorch_vision
 cd /opt/pytorch_vision
 
 # Build TorchVision
-export BUILD_VERSION=0.18.1
+export BUILD_VERSION=0.19.1
 time python setup.py bdist_wheel
 
 # Install TorchVision
-pip install /opt/pytorch_vision/dist/torchvision-0.18.1-cp312-cp312-linux_x86_64.whl
+pip install /opt/pytorch_vision/dist/torchvision-0.19.1-cp312-cp312-linux_x86_64.whl
 ```
 
-```shell-session
-real    0m45.532s
-user    8m18.431s
-sys     0m48.950s
-```
-
-#### TorchAudio 2.3.1
+#### TorchAudio 2.4.1
 
 ```shell
 # Download TorchAudio
 sudo mkdir /opt/pytorch_audio
 sudo chown $LOGNAME: /opt/pytorch_audio
-git clone --recursive https://github.com/pytorch/audio.git -b v2.3.1 /opt/pytorch_audio
+git clone --recursive https://github.com/pytorch/audio.git -b v2.4.1 /opt/pytorch_audio
 cd /opt/pytorch_audio
 
 # Build TorchAudio
-export BUILD_VERSION=2.3.1
+export BUILD_VERSION=2.4.1
 time python setup.py bdist_wheel
 
 # Install TorchAudio
-pip install /opt/pytorch_audio/dist/torchaudio-2.3.1-cp312-cp312-linux_x86_64.whl
-```
-
-```shell-session
-real    1m11.653s
-user    27m53.991s
-sys     3m49.060s
+pip install /opt/pytorch_audio/dist/torchaudio-2.4.1-cp312-cp312-linux_x86_64.whl
 ```
 
 #### Backup
@@ -232,9 +225,7 @@ git clone https://github.com/comfyanonymous/ComfyUI.git /opt/comfyui
 cd /opt/comfyui
 
 # Install PyTorch and requirements
-mkdir .pre-built
-cp /opt/pytorch*/dist/torch*.whl .pre-built/
-pip install -r requirements.txt .pre-built/*.whl "numpy<2.0"
+pip install -r requirements.txt /opt/pytorch*/dist/torch*.whl
 
 # Run ComfyUI
 python main.py --listen --lowvram
@@ -243,10 +234,11 @@ python main.py --listen --lowvram
 #### Text to Image
 
 > You can drag-and-drop images into ComfyUI to load workflow.
+> Each test ran after **Free model and node cache**
 
 Test 1 (v1-5-pruned-emaonly-fp16, Batch size: 1)
 
-![Image #1](./images/ComfyUI_2025-03-26_145336_00001_.png)
+![Image #1](./images/ComfyUI_2025-04-04_110532_00001_.png)
 
 Output
 
@@ -262,10 +254,10 @@ loaded completely 9.5367431640625e+25 235.84423828125 True
 CLIP/text encoder model load device: cpu, offload device: cpu, current: cpu, dtype: torch.float16
 Requested to load BaseModel
 loaded completely 2542.42451171875 1639.406135559082 True
-100%|██████████| 20/20 [00:20<00:00,  1.01s/it]
+100%|██████████| 20/20 [00:19<00:00,  1.03it/s]
 Requested to load AutoencoderKL
 loaded completely 1183.9994140625001 319.11416244506836 True
-Prompt executed in 39.48 seconds
+Prompt executed in 40.78 seconds
 ```
 
 <details>
@@ -275,45 +267,56 @@ Prompt executed in 39.48 seconds
 |||
 |-|-|
 |Batch #1|Batch #2|
-|![Image #2](./images/ComfyUI_2025-03-26_142303_00001_.png)|![Image #3](./images/ComfyUI_2025-03-26_142303_00002_.png)|
+|![Image #2](./images/ComfyUI_2025-04-04_110712_00001_.png)|![Image #3](./images/ComfyUI_2025-04-04_112054_00001_.png)|
 |Batch #3|Batch #4|
-|![Image #4](./images/ComfyUI_2025-03-26_142303_00003_.png)|![Image #5](./images/ComfyUI_2025-03-26_142303_00004_.png)|
+|![Image #4](./images/ComfyUI_2025-04-04_112450_00001_.png)|![Image #5](./images/ComfyUI_2025-04-04_113012_00001_.png)|
 
 Output
 
 ```shell-session
 got prompt
+model weight dtype torch.float16, manual cast: None
+model_type V_PREDICTION
+Using split attention in VAE
+Using split attention in VAE
+VAE load device: cuda:0, offload device: cpu, dtype: torch.float32
+Requested to load SDXLClipModel
+loaded completely 9.5367431640625e+25 1560.802734375 True
+CLIP/text encoder model load device: cpu, offload device: cpu, current: cpu, dtype: torch.float16
+Requested to load SDXLClipModel
+Token indices sequence length is longer than the specified maximum sequence length for this model (125 > 77). Running this sequence through the model will result in indexing errors
+Token indices sequence length is longer than the specified maximum sequence length for this model (125 > 77). Running this sequence through the model will result in indexing errors
 Requested to load SDXL
+loaded partially 1504.6498046875001 1504.6496658325195 0
+100%|██████████| 28/28 [03:43<00:00,  7.99s/it]
+Requested to load AutoencoderKL
+0 models unloaded.
+loaded completely 1504.65 319.11416244506836 True
+Prompt executed in 808.69 seconds
 got prompt
+Requested to load SDXL
+loaded partially 1504.6498046875001 1504.6496658325195 0
+100%|██████████| 28/28 [03:40<00:00,  7.86s/it]
+Requested to load AutoencoderKL
+0 models unloaded.
+loaded completely 1504.65 319.11416244506836 True
+Prompt executed in 224.96 seconds
 got prompt
+Requested to load SDXL
+loaded partially 1504.7998046875 1504.799201965332 0
+100%|██████████| 28/28 [03:39<00:00,  7.83s/it]
+Requested to load AutoencoderKL
+0 models unloaded.
+loaded completely 1504.8000000000002 319.11416244506836 True
+Prompt executed in 222.69 seconds
 got prompt
-loaded partially 1511.9998046875 1511.998908996582 0
-100%|██████████| 28/28 [03:40<00:00,  7.89s/it]
-Requested to load AutoencoderKL
-0 models unloaded.
-loaded completely 1512.0 319.11416244506836 True
-Prompt executed in 224.83 seconds
 Requested to load SDXL
-loaded partially 1511.9998046875 1511.998908996582 0
-100%|██████████| 28/28 [03:40<00:00,  7.87s/it]
+loaded partially 1504.7998046875 1504.799201965332 0
+100%|██████████| 28/28 [03:39<00:00,  7.83s/it]
 Requested to load AutoencoderKL
 0 models unloaded.
-loaded completely 1512.0 319.11416244506836 True
-Prompt executed in 224.02 seconds
-Requested to load SDXL
-loaded partially 1511.9998046875 1511.998908996582 0
-100%|██████████| 28/28 [03:40<00:00,  7.87s/it]
-Requested to load AutoencoderKL
-0 models unloaded.
-loaded completely 1512.0 319.11416244506836 True
-Prompt executed in 224.02 seconds
-Requested to load SDXL
-loaded partially 1511.9998046875 1511.998908996582 0
-100%|██████████| 28/28 [03:40<00:00,  7.87s/it]
-Requested to load AutoencoderKL
-0 models unloaded.
-loaded completely 1512.0 319.11416244506836 True
-Prompt executed in 223.87 seconds
+loaded completely 1504.8000000000002 319.11416244506836 True
+Prompt executed in 222.69 seconds
 ```
 
 </details>
